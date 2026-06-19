@@ -212,9 +212,17 @@ class PackageHistory:
         shoot_date: str,
         package_path: str,
         stats: ProcessingStats,
-        status: str = "success"
+        status: str = "success",
+        error_message: str = ""
     ) -> PackageRecord:
         now = datetime.now()
+        failed_files = list(stats.failed_files_list)
+        if status == "failed" and error_message and not failed_files:
+            failed_files = [{
+                "filename": project_name,
+                "error": error_message,
+                "timestamp": now.strftime("%Y-%m-%d %H:%M:%S")
+            }]
         record = PackageRecord(
             record_id=now.strftime("%Y%m%d_%H%M%S_") + project_name,
             project_name=project_name,
@@ -228,7 +236,7 @@ class PackageHistory:
             skipped=stats.skipped_files,
             failed=stats.failed_files,
             skip_reasons=dict(stats.skip_reasons),
-            failed_files=list(stats.failed_files_list)
+            failed_files=failed_files
         )
         self.add_record(record)
         return record

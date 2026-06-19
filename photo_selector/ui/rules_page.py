@@ -169,6 +169,9 @@ class RulesPage(QWidget):
 
         self._update_watermark_state(self.rules.watermark_enabled)
 
+    def refresh_controls(self):
+        self._load_rules()
+
     def _apply_rules(self):
         self.rules.thumbnail_width = self.thumb_width.value()
         self.rules.thumbnail_height = self.thumb_height.value()

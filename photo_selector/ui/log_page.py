@@ -1,21 +1,31 @@
+import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QTextEdit,
     QSplitter, QAbstractItemView, QMessageBox, QListWidget, QListWidgetItem,
-    QDateEdit, QTabWidget
+    QDateEdit, QTabWidget, QFileDialog
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
 
 from ..logger import Logger, PackageHistory, PackageRecord
+from ..batch_record import BatchHistory, BatchRecord
 
 
 class LogPage(QWidget):
-    def __init__(self, logger: Logger, history: PackageHistory, parent=None):
+    def __init__(
+        self,
+        logger: Logger,
+        history: PackageHistory,
+        batch_history: BatchHistory,
+        parent=None
+    ):
         super().__init__(parent)
         self.logger = logger
         self.history = history
+        self.batch_history = batch_history
         self._current_entries = []
         self._init_ui()
 
@@ -25,10 +35,112 @@ class LogPage(QWidget):
 
         self.tabs = QTabWidget()
 
+        self._init_batch_tab()
         self._init_history_tab()
         self._init_realtime_tab()
 
         layout.addWidget(self.tabs, 1)
+
+    def _init_batch_tab(self):
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        filter_group = QGroupBox("筛选")
+        filter_layout = QVBoxLayout(filter_group)
+
+        date_row = QHBoxLayout()
+        date_row.addWidget(QLabel("从:"))
+        self.batch_start_date = QDateEdit()
+        self.batch_start_date.setCalendarPopup(True)
+        default_start = QDate.currentDate().addDays(-30)
+        self.batch_start_date.setDate(default_start)
+        date_row.addWidget(self.batch_start_date)
+        filter_layout.addLayout(date_row)
+
+        date_row2 = QHBoxLayout()
+        date_row2.addWidget(QLabel("到:"))
+        self.batch_end_date = QDateEdit()
+        self.batch_end_date.setCalendarPopup(True)
+        self.batch_end_date.setDate(QDate.currentDate())
+        date_row2.addWidget(self.batch_end_date)
+        filter_layout.addLayout(date_row2)
+
+        btn_row = QHBoxLayout()
+        self.batch_filter_btn = QPushButton("筛选")
+        self.batch_filter_btn.clicked.connect(self._apply_batch_filter)
+        btn_row.addWidget(self.batch_filter_btn)
+        self.batch_reset_btn = QPushButton("全部")
+        self.batch_reset_btn.clicked.connect(self._reset_batch_filter)
+        btn_row.addWidget(self.batch_reset_btn)
+        filter_layout.addLayout(btn_row)
+
+        left_layout.addWidget(filter_group)
+
+        list_group = QGroupBox("批量任务")
+        list_layout = QVBoxLayout(list_group)
+        self.batch_list = QListWidget()
+        self.batch_list.itemClicked.connect(self._on_batch_clicked)
+        list_layout.addWidget(self.batch_list)
+        self.batch_count_label = QLabel("共 0 个批次")
+        self.batch_count_label.setStyleSheet("QLabel { color: #666; font-size: 11px; }")
+        list_layout.addWidget(self.batch_count_label)
+        left_layout.addWidget(list_group, 1)
+
+        export_btn_row = QHBoxLayout()
+        self.export_batch_btn = QPushButton("📥 导出整批报告")
+        self.export_batch_btn.clicked.connect(self._export_selected_batch)
+        export_btn_row.addWidget(self.export_batch_btn)
+        self.refresh_batch_btn = QPushButton("🔄 刷新")
+        self.refresh_batch_btn.clicked.connect(self.refresh_batch_history)
+        export_btn_row.addWidget(self.refresh_batch_btn)
+        left_layout.addLayout(export_btn_row)
+
+        layout.addWidget(left_panel, 1)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
+
+        summary_group = QGroupBox("批次汇总")
+        summary_layout = QVBoxLayout(summary_group)
+        self.batch_summary = QTextEdit()
+        self.batch_summary.setReadOnly(True)
+        self.batch_summary.setMaximumHeight(180)
+        summary_layout.addWidget(self.batch_summary)
+        right_layout.addWidget(summary_group)
+
+        projects_group = QGroupBox("各项目明细")
+        projects_layout = QVBoxLayout(projects_group)
+        self.batch_projects_table = QTableWidget()
+        self.batch_projects_table.setColumnCount(6)
+        self.batch_projects_table.setHorizontalHeaderLabels(["项目", "状态", "总数", "成功", "跳过", "失败"])
+        self.batch_projects_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.batch_projects_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.batch_projects_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.batch_projects_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.batch_projects_table.setAlternatingRowColors(True)
+        self.batch_projects_table.itemClicked.connect(self._on_batch_project_clicked)
+        projects_layout.addWidget(self.batch_projects_table)
+        right_layout.addWidget(projects_group, 1)
+
+        detail_group = QGroupBox("选中项目详情")
+        detail_layout = QVBoxLayout(detail_group)
+        self.batch_project_detail = QTextEdit()
+        self.batch_project_detail.setReadOnly(True)
+        self.batch_project_detail.setMaximumHeight(160)
+        detail_layout.addWidget(self.batch_project_detail)
+        right_layout.addWidget(detail_group)
+
+        layout.addWidget(right_panel, 3)
+
+        self.tabs.addTab(widget, "📦 批量任务归档")
 
     def _init_history_tab(self):
         widget = QWidget()
@@ -129,7 +241,7 @@ class LogPage(QWidget):
 
         layout.addWidget(right_panel, 3)
 
-        self.tabs.addTab(widget, "📊 打包历史")
+        self.tabs.addTab(widget, "📊 单项目历史")
 
     def _init_realtime_tab(self):
         widget = QWidget()
@@ -234,6 +346,119 @@ class LogPage(QWidget):
                       f"<div style='font-size: 12px; color: #666;'>{title}</div>")
         label.setStyleSheet("QLabel { padding: 10px; background: #f5f5f5; border-radius: 6px; }")
         return label
+
+    def refresh_batch_history(self):
+        self.batch_list.clear()
+        records = self.batch_history.records
+        self.batch_count_label.setText(f"共 {len(records)} 个批次")
+
+        for r in records:
+            status_text = "✓ 完成" if r.status == "completed" else ("⏸️ 已停止" if r.status == "stopped" else "✗ 失败")
+            status_color = "#4CAF50" if r.status == "completed" else "#FF9800" if r.status == "stopped" else "#F44336"
+            item_text = f"{r.timestamp[:16]} | {r.completed_projects}/{r.total_projects} 项目 | {status_text}"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.UserRole, r.batch_id)
+            item.setForeground(QColor(status_color))
+            item.setToolTip(f"批次号: {r.batch_id}\n方案: {r.profile_name}\n耗时: {r.calculate_duration()}")
+            self.batch_list.addItem(item)
+
+        if self.batch_list.count() > 0:
+            self.batch_list.setCurrentRow(0)
+            self._on_batch_clicked(self.batch_list.item(0))
+
+    def _on_batch_clicked(self, item):
+        batch_id = item.data(Qt.UserRole)
+        record = self.batch_history.get_record(batch_id)
+        if record:
+            self._show_batch_summary(record)
+            self._show_batch_projects(record)
+
+    def _show_batch_summary(self, record: BatchRecord):
+        self.batch_summary.setPlainText(record.get_summary())
+
+    def _show_batch_projects(self, record: BatchRecord):
+        self.batch_projects_table.setRowCount(len(record.project_results))
+        for row, pr in enumerate(record.project_results):
+            self.batch_projects_table.setItem(row, 0, QTableWidgetItem(pr.project_name))
+            status_text = "成功" if pr.status == "success" else "失败"
+            status_item = QTableWidgetItem(status_text)
+            status_item.setForeground(QColor("#4CAF50" if pr.status == "success" else "#F44336"))
+            self.batch_projects_table.setItem(row, 1, status_item)
+            self.batch_projects_table.setItem(row, 2, QTableWidgetItem(str(pr.total_photos)))
+            self.batch_projects_table.setItem(row, 3, QTableWidgetItem(str(pr.processed)))
+            self.batch_projects_table.setItem(row, 4, QTableWidgetItem(str(pr.skipped)))
+            self.batch_projects_table.setItem(row, 5, QTableWidgetItem(str(pr.failed)))
+
+        if record.project_results:
+            self.batch_projects_table.setCurrentCell(0, 0)
+            self._show_batch_project_detail(record.project_results[0])
+        else:
+            self.batch_project_detail.clear()
+
+    def _on_batch_project_clicked(self, item):
+        row = item.row()
+        batch_item = self.batch_list.currentItem()
+        if not batch_item:
+            return
+        batch_id = batch_item.data(Qt.UserRole)
+        record = self.batch_history.get_record(batch_id)
+        if record and 0 <= row < len(record.project_results):
+            self._show_batch_project_detail(record.project_results[row])
+
+    def _show_batch_project_detail(self, pr):
+        self.batch_project_detail.setPlainText(pr.get_summary())
+
+    def _apply_batch_filter(self):
+        start = self.batch_start_date.date().toString("yyyy-MM-dd")
+        end = self.batch_end_date.date().toString("yyyy-MM-dd")
+        filtered = self.batch_history.get_records_by_date_range(start, end)
+
+        self.batch_list.clear()
+        self.batch_count_label.setText(f"共 {len(filtered)} 个批次")
+
+        for r in filtered:
+            status_text = "✓ 完成" if r.status == "completed" else ("⏸️ 已停止" if r.status == "stopped" else "✗ 失败")
+            status_color = "#4CAF50" if r.status == "completed" else "#FF9800" if r.status == "stopped" else "#F44336"
+            item_text = f"{r.timestamp[:16]} | {r.completed_projects}/{r.total_projects} 项目 | {status_text}"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.UserRole, r.batch_id)
+            item.setForeground(QColor(status_color))
+            self.batch_list.addItem(item)
+
+    def _reset_batch_filter(self):
+        self.batch_start_date.setDate(QDate.currentDate().addDays(-30))
+        self.batch_end_date.setDate(QDate.currentDate())
+        self.refresh_batch_history()
+
+    def _export_selected_batch(self):
+        current = self.batch_list.currentItem()
+        if not current:
+            QMessageBox.information(self, "提示", "请先选择一个批次")
+            return
+        batch_id = current.data(Qt.UserRole)
+        record = self.batch_history.get_record(batch_id)
+        if not record:
+            QMessageBox.warning(self, "提示", "未找到对应记录")
+            return
+
+        default_name = f"batch_{record.batch_id}_报告.txt"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出整批报告", default_name, "文本文件 (*.txt);;JSON文件 (*.json)"
+        )
+        if not file_path:
+            return
+
+        try:
+            if file_path.lower().endswith(".json"):
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(record.to_dict(), f, ensure_ascii=False, indent=2)
+            else:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(record.get_report_text())
+
+            QMessageBox.information(self, "成功", f"整批报告已导出到:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"导出失败: {str(e)}")
 
     def refresh_history(self):
         self.project_list.clear()
@@ -390,8 +615,6 @@ class LogPage(QWidget):
             QMessageBox.warning(self, "提示", "未找到对应记录")
             return
 
-        from PySide6.QtWidgets import QFileDialog
-        import json
         default_name = f"{target.record_id}_报告.txt"
         file_path, _ = QFileDialog.getSaveFileName(
             self, "导出记录", default_name, "文本文件 (*.txt);;JSON文件 (*.json)"

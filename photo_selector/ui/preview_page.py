@@ -266,14 +266,27 @@ class PreviewPage(QWidget):
 
         wm_text = self.rules.watermark_text if (self.rules.watermark_enabled and self.apply_rules_checkbox.isChecked()) else ""
         wm_opacity = self.rules.watermark_opacity if self.rules.watermark_enabled else 0
-        thumb_size = (140, 105)
+
+        tw = self.rules.thumbnail_width
+        th = self.rules.thumbnail_height
+        ratio = th / tw if tw > 0 else 0.75
+        display_w = 160
+        display_h = int(display_w * ratio)
+
+        self.photos_list.setIconSize(QSize(display_w - 20, display_h - 20))
+        self.photos_list.setGridSize(QSize(display_w, display_h + 30))
+
+        raw_extensions = {'.raw', '.cr2', '.nef', '.arw', '.dng', '.rw2'}
 
         for i, photo in enumerate(self.current_project.photos, 1):
             try:
-                if self.apply_rules_checkbox.isChecked():
+                ext = photo.path.suffix.lower()
+                is_raw = ext in raw_extensions
+
+                if self.apply_rules_checkbox.isChecked() and not is_raw:
                     pil_img = self.image_processor.render_thumbnail_image(
                         photo.path,
-                        size=thumb_size,
+                        size=(display_w - 20, display_h - 20),
                         watermark_text=wm_text,
                         watermark_opacity=wm_opacity
                     )
@@ -282,22 +295,43 @@ class PreviewPage(QWidget):
                     else:
                         pixmap = None
                 else:
-                    pixmap = QPixmap(str(photo.path))
+                    if is_raw:
+                        pixmap = None
+                    else:
+                        pixmap = QPixmap(str(photo.path))
 
                 if pixmap and not pixmap.isNull():
                     icon = QIcon(pixmap)
                     item = QListWidgetItem(icon, f"{i:04d}\n{photo.path.suffix}")
                     item.setTextAlignment(Qt.AlignCenter)
                     item.setData(Qt.UserRole, str(photo.path))
+                    if is_raw:
+                        item.setForeground(QColor("#9C27B0"))
+                        item.setText(f"{i:04d}\nRAW")
                     self.photos_list.addItem(item)
                 else:
-                    item = QListWidgetItem(f"❌ {i:04d}\n损坏")
-                    item.setTextAlignment(Qt.AlignCenter)
-                    item.setData(Qt.UserRole, str(photo.path))
+                    if is_raw:
+                        item = QListWidgetItem(f"📄 {i:04d}\nRAW")
+                        item.setTextAlignment(Qt.AlignCenter)
+                        item.setData(Qt.UserRole, str(photo.path))
+                        item.setForeground(QColor("#9C27B0"))
+                        item.setToolTip(f"RAW格式文件: {photo.filename}")
+                    else:
+                        is_valid = self.image_processor.is_valid_image(photo.path)
+                        if not is_valid:
+                            item = QListWidgetItem(f"❌ {i:04d}\n损坏")
+                            item.setTextAlignment(Qt.AlignCenter)
+                            item.setData(Qt.UserRole, str(photo.path))
+                            item.setForeground(QColor("#F44336"))
+                        else:
+                            item = QListWidgetItem(f"{i:04d}\n{photo.path.suffix}")
+                            item.setTextAlignment(Qt.AlignCenter)
+                            item.setData(Qt.UserRole, str(photo.path))
                     self.photos_list.addItem(item)
             except Exception:
                 item = QListWidgetItem(f"❌ {i:04d}\n错误")
                 item.setTextAlignment(Qt.AlignCenter)
+                item.setForeground(QColor("#F44336"))
                 self.photos_list.addItem(item)
 
     def _on_photo_clicked(self, item):
