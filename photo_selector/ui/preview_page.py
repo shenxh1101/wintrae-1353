@@ -1,12 +1,12 @@
 import os
+import tempfile
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QSplitter, QScrollArea, QFrame, QGridLayout, QMessageBox, QPushButton,
-    QComboBox, QGroupBox, QCheckBox
+    QSplitter, QMessageBox, QPushButton, QComboBox, QGroupBox, QCheckBox
 )
-from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QPixmap, QImage, QIcon
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QPixmap, QIcon
 
 from ..scanner import FileScanner, ProjectItem
 from ..rules import RulesConfig
@@ -20,6 +20,7 @@ class PreviewPage(QWidget):
         self.rules = rules
         self.image_processor = ImageProcessor()
         self.current_project: ProjectItem = None
+        self._tmp_dir = Path(tempfile.mkdtemp(prefix="selector_preview_"))
         self._init_ui()
 
     def _init_ui(self):
@@ -35,6 +36,11 @@ class PreviewPage(QWidget):
 
         top_layout.addStretch()
 
+        self.apply_rules_checkbox = QCheckBox("按当前规则预览（水印+尺寸）")
+        self.apply_rules_checkbox.setChecked(True)
+        self.apply_rules_checkbox.stateChanged.connect(self._on_toggle_rules)
+        top_layout.addWidget(self.apply_rules_checkbox)
+
         self.refresh_btn = QPushButton("刷新预览")
         self.refresh_btn.clicked.connect(self.refresh_preview)
         top_layout.addWidget(self.refresh_btn)
@@ -47,16 +53,20 @@ class PreviewPage(QWidget):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
-        cover_group = QGroupBox("封面预览")
+        cover_group = QGroupBox("封面预览 (按规则渲染)")
         cover_layout = QVBoxLayout(cover_group)
 
         self.cover_label = QLabel()
         self.cover_label.setAlignment(Qt.AlignCenter)
         self.cover_label.setMinimumSize(400, 300)
-        self.cover_label.setStyleSheet("QLabel { background: #222; border: 2px solid #555; }")
-        self.cover_label.setText("暂无封面")
         self.cover_label.setStyleSheet("QLabel { background: #222; color: #888; border: 2px solid #555; }")
+        self.cover_label.setText("暂无封面")
         cover_layout.addWidget(self.cover_label)
+
+        self.cover_size_label = QLabel("")
+        self.cover_size_label.setStyleSheet("QLabel { color: #666; font-size: 11px; }")
+        self.cover_size_label.setAlignment(Qt.AlignCenter)
+        cover_layout.addWidget(self.cover_size_label)
 
         left_layout.addWidget(cover_group)
 
@@ -67,7 +77,7 @@ class PreviewPage(QWidget):
         info_layout.addWidget(self.info_label)
         left_layout.addWidget(info_group)
 
-        warning_group = QGroupBox("⚠️ 警告信息")
+        warning_group = QGroupBox("⚠️ 警告 / 提示")
         warning_layout = QVBoxLayout(warning_group)
         self.warning_label = QLabel("暂无警告")
         self.warning_label.setWordWrap(True)
@@ -81,14 +91,15 @@ class PreviewPage(QWidget):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
-        right_layout.addWidget(QLabel("照片列表 (点击预览):"))
+        right_layout.addWidget(QLabel("照片列表 (点击预览大图):"))
 
         self.photos_list = QListWidget()
         self.photos_list.setViewMode(QListWidget.IconMode)
-        self.photos_list.setIconSize(QSize(120, 90))
+        self.photos_list.setIconSize(QSize(140, 105))
         self.photos_list.setResizeMode(QListWidget.Adjust)
         self.photos_list.setMovement(QListWidget.Static)
-        self.photos_list.setSpacing(8)
+        self.photos_list.setSpacing(10)
+        self.photos_list.setGridSize(QSize(160, 140))
         self.photos_list.itemClicked.connect(self._on_photo_clicked)
         right_layout.addWidget(self.photos_list, 1)
 
@@ -123,8 +134,11 @@ class PreviewPage(QWidget):
         if self.current_project:
             self._update_project_info()
             self._update_warnings()
-            self._load_cover()
-            self._load_photo_thumbs()
+            self._render_cover()
+            self._render_photo_thumbs()
+
+    def _on_toggle_rules(self, _state):
+        self.refresh_preview()
 
     def _update_project_info(self):
         if not self.current_project:
@@ -166,15 +180,21 @@ class PreviewPage(QWidget):
 
         raw_count = 0
         image_count = 0
+        corrupted_count = 0
         for photo in self.current_project.photos:
             ext = photo.path.suffix.lower()
             if ext in {'.raw', '.cr2', '.nef', '.arw', '.dng', '.rw2'}:
                 raw_count += 1
             else:
                 image_count += 1
+            if not self.image_processor.is_valid_image(photo.path):
+                corrupted_count += 1
 
         if raw_count > 0 and not self.rules.include_raw:
             warnings.append(f"ℹ️ 包含 {raw_count} 个RAW文件，当前设置不包含RAW原片")
+
+        if corrupted_count > 0:
+            warnings.append(f"❌ 检测到 {corrupted_count} 个可能损坏的图片文件")
 
         if warnings:
             self.warning_label.setText("<br>".join(warnings))
@@ -183,56 +203,43 @@ class PreviewPage(QWidget):
             self.warning_label.setText("✓ 一切正常")
             self.warning_label.setStyleSheet("QLabel { color: #27ae60; }")
 
-    def _load_cover(self):
+    def _render_cover(self):
         if not self.current_project or not self.current_project.cover_path:
             self.cover_label.setText("暂无封面")
+            self.cover_size_label.setText("")
             return
 
         cover_path = self.current_project.cover_path
         if not cover_path.exists():
             self.cover_label.setText("封面文件不存在")
+            self.cover_size_label.setText("")
             return
 
         try:
-            pixmap = QPixmap(str(cover_path))
-            if not pixmap.isNull():
-                scaled = pixmap.scaled(
-                    self.cover_label.size(),
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
+            if self.apply_rules_checkbox.isChecked():
+                wm_text = self.rules.watermark_text if self.rules.watermark_enabled else ""
+                wm_opacity = self.rules.watermark_opacity if self.rules.watermark_enabled else 0
+                pil_img = self.image_processor.render_thumbnail_image(
+                    cover_path,
+                    size=self.rules.thumbnail_size,
+                    watermark_text=wm_text,
+                    watermark_opacity=wm_opacity
                 )
-                self.cover_label.setPixmap(scaled)
+                if pil_img:
+                    pixmap = ImageProcessor.pil_to_qpixmap(pil_img)
+                    if pixmap and not pixmap.isNull():
+                        scaled = pixmap.scaled(
+                            self.cover_label.size(),
+                            Qt.KeepAspectRatio,
+                            Qt.SmoothTransformation
+                        )
+                        self.cover_label.setPixmap(scaled)
+                        self.cover_size_label.setText(
+                            f"实际输出尺寸: {pil_img.width} × {pil_img.height} px  |  水印: {'开' if wm_text else '关'}"
+                        )
+                        return
             else:
-                self.cover_label.setText("无法加载封面")
-        except Exception:
-            self.cover_label.setText("加载封面失败")
-
-    def _load_photo_thumbs(self):
-        self.photos_list.clear()
-
-        if not self.current_project:
-            return
-
-        for i, photo in enumerate(self.current_project.photos, 1):
-            try:
-                pixmap = QPixmap(str(photo.path))
-                if not pixmap.isNull():
-                    icon = QIcon(pixmap.scaled(120, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                    item = QListWidgetItem(icon, f"{i:04d}")
-                    item.setData(Qt.UserRole, str(photo.path))
-                    self.photos_list.addItem(item)
-                else:
-                    item = QListWidgetItem(f"❌ {i:04d}")
-                    self.photos_list.addItem(item)
-            except Exception:
-                item = QListWidgetItem(f"❌ {i:04d}")
-                self.photos_list.addItem(item)
-
-    def _on_photo_clicked(self, item):
-        photo_path = item.data(Qt.UserRole)
-        if photo_path and Path(photo_path).exists():
-            try:
-                pixmap = QPixmap(photo_path)
+                pixmap = QPixmap(str(cover_path))
                 if not pixmap.isNull():
                     scaled = pixmap.scaled(
                         self.cover_label.size(),
@@ -240,11 +247,103 @@ class PreviewPage(QWidget):
                         Qt.SmoothTransformation
                     )
                     self.cover_label.setPixmap(scaled)
+                    self.cover_size_label.setText(
+                        f"原图尺寸: {pixmap.width()} × {pixmap.height()} px  (不应用规则)"
+                    )
+                    return
+
+            self.cover_label.setText("无法加载封面")
+            self.cover_size_label.setText("")
+        except Exception:
+            self.cover_label.setText("加载封面失败")
+            self.cover_size_label.setText("")
+
+    def _render_photo_thumbs(self):
+        self.photos_list.clear()
+
+        if not self.current_project:
+            return
+
+        wm_text = self.rules.watermark_text if (self.rules.watermark_enabled and self.apply_rules_checkbox.isChecked()) else ""
+        wm_opacity = self.rules.watermark_opacity if self.rules.watermark_enabled else 0
+        thumb_size = (140, 105)
+
+        for i, photo in enumerate(self.current_project.photos, 1):
+            try:
+                if self.apply_rules_checkbox.isChecked():
+                    pil_img = self.image_processor.render_thumbnail_image(
+                        photo.path,
+                        size=thumb_size,
+                        watermark_text=wm_text,
+                        watermark_opacity=wm_opacity
+                    )
+                    if pil_img:
+                        pixmap = ImageProcessor.pil_to_qpixmap(pil_img)
+                    else:
+                        pixmap = None
+                else:
+                    pixmap = QPixmap(str(photo.path))
+
+                if pixmap and not pixmap.isNull():
+                    icon = QIcon(pixmap)
+                    item = QListWidgetItem(icon, f"{i:04d}\n{photo.path.suffix}")
+                    item.setTextAlignment(Qt.AlignCenter)
+                    item.setData(Qt.UserRole, str(photo.path))
+                    self.photos_list.addItem(item)
+                else:
+                    item = QListWidgetItem(f"❌ {i:04d}\n损坏")
+                    item.setTextAlignment(Qt.AlignCenter)
+                    item.setData(Qt.UserRole, str(photo.path))
+                    self.photos_list.addItem(item)
             except Exception:
-                pass
+                item = QListWidgetItem(f"❌ {i:04d}\n错误")
+                item.setTextAlignment(Qt.AlignCenter)
+                self.photos_list.addItem(item)
+
+    def _on_photo_clicked(self, item):
+        photo_path = item.data(Qt.UserRole)
+        if not photo_path or not Path(photo_path).exists():
+            return
+
+        try:
+            if self.apply_rules_checkbox.isChecked():
+                wm_text = self.rules.watermark_text if self.rules.watermark_enabled else ""
+                wm_opacity = self.rules.watermark_opacity if self.rules.watermark_enabled else 0
+                pil_img = self.image_processor.render_thumbnail_image(
+                    Path(photo_path),
+                    size=self.rules.thumbnail_size,
+                    watermark_text=wm_text,
+                    watermark_opacity=wm_opacity
+                )
+                if pil_img:
+                    pixmap = ImageProcessor.pil_to_qpixmap(pil_img)
+                    if pixmap and not pixmap.isNull():
+                        scaled = pixmap.scaled(
+                            self.cover_label.size(),
+                            Qt.KeepAspectRatio,
+                            Qt.SmoothTransformation
+                        )
+                        self.cover_label.setPixmap(scaled)
+                        self.cover_size_label.setText(
+                            f"实际输出尺寸: {pil_img.width} × {pil_img.height} px  |  水印: {'开' if wm_text else '关'}"
+                        )
+                        return
+
+            pixmap = QPixmap(photo_path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(
+                    self.cover_label.size(),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                self.cover_label.setPixmap(scaled)
+                self.cover_size_label.setText(f"原图: {pixmap.width()} × {pixmap.height()} px")
+        except Exception:
+            pass
 
     def refresh_preview(self):
         if self.current_project:
             self._update_project_info()
             self._update_warnings()
-            self._load_cover()
+            self._render_cover()
+            self._render_photo_thumbs()

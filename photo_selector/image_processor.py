@@ -82,3 +82,40 @@ class ImageProcessor:
             return True
         except Exception:
             return False
+
+    def render_thumbnail_image(
+        self,
+        src_path: Path,
+        size: Tuple[int, int],
+        watermark_text: str = "",
+        watermark_opacity: int = 50
+    ) -> Optional[Image.Image]:
+        try:
+            img = Image.open(src_path)
+            img = ImageOps.exif_transpose(img)
+
+            img.thumbnail(size, Image.LANCZOS)
+
+            if img.mode not in ('RGB', 'RGBA'):
+                img = img.convert('RGB')
+
+            if watermark_text and watermark_opacity > 0:
+                img = self._add_watermark(img, watermark_text, watermark_opacity)
+
+            return img
+        except Exception:
+            return None
+
+    @staticmethod
+    def pil_to_qpixmap(img: Image.Image) -> Optional['QPixmap']:
+        try:
+            from PySide6.QtGui import QPixmap, QImage
+            if img.mode == 'RGBA':
+                data = img.tobytes("raw", "RGBA")
+                qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
+            else:
+                data = img.tobytes("raw", "RGB")
+                qimg = QImage(data, img.width, img.height, QImage.Format_RGB888)
+            return QPixmap.fromImage(qimg)
+        except Exception:
+            return None

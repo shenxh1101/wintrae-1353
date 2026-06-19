@@ -35,6 +35,26 @@ class LogEntry:
 
 
 @dataclass
+class PackageRecord:
+    record_id: str
+    project_name: str
+    client_name: str
+    shoot_date: str
+    package_path: str
+    timestamp: str
+    status: str = "success"
+    total_photos: int = 0
+    processed: int = 0
+    skipped: int = 0
+    failed: int = 0
+    skip_reasons: Dict[str, int] = field(default_factory=dict)
+    failed_files: List[dict] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class ProcessingStats:
     total_files: int = 0
     processed_files: int = 0
@@ -169,3 +189,86 @@ class Logger:
 
     def get_logs_by_level(self, level: LogLevel) -> List[LogEntry]:
         return [e for e in self.entries if e.level == level.value]
+
+
+class PackageHistory:
+    def __init__(self):
+        self.records: List[PackageRecord] = []
+        self.history_dir: Optional[Path] = None
+
+    def set_history_directory(self, dir_path: str):
+        self.history_dir = Path(dir_path)
+        self.history_dir.mkdir(parents=True, exist_ok=True)
+        self._load_from_disk()
+
+    def add_record(self, record: PackageRecord):
+        self.records.append(record)
+        self._save_record(record)
+
+    def create_record_from_stats(
+        self,
+        project_name: str,
+        client_name: str,
+        shoot_date: str,
+        package_path: str,
+        stats: ProcessingStats,
+        status: str = "success"
+    ) -> PackageRecord:
+        now = datetime.now()
+        record = PackageRecord(
+            record_id=now.strftime("%Y%m%d_%H%M%S_") + project_name,
+            project_name=project_name,
+            client_name=client_name,
+            shoot_date=shoot_date,
+            package_path=package_path,
+            timestamp=now.strftime("%Y-%m-%d %H:%M:%S"),
+            status=status,
+            total_photos=stats.total_files,
+            processed=stats.processed_files,
+            skipped=stats.skipped_files,
+            failed=stats.failed_files,
+            skip_reasons=dict(stats.skip_reasons),
+            failed_files=list(stats.failed_files_list)
+        )
+        self.add_record(record)
+        return record
+
+    def get_records_by_project(self, project_name: str) -> List[PackageRecord]:
+        return [r for r in self.records if r.project_name == project_name]
+
+    def get_all_projects(self) -> List[str]:
+        projects = set()
+        for r in self.records:
+            projects.add(r.project_name)
+        return sorted(projects)
+
+    def get_records_by_date_range(self, start_date: str, end_date: str) -> List[PackageRecord]:
+        return [
+            r for r in self.records
+            if start_date <= r.timestamp[:10] <= end_date
+        ]
+
+    def _save_record(self, record: PackageRecord):
+        if not self.history_dir:
+            return
+        filename = f"{record.record_id}.json"
+        path = self.history_dir / filename
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(record.to_dict(), f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _load_from_disk(self):
+        if not self.history_dir or not self.history_dir.exists():
+            return
+        self.records = []
+        for file in sorted(self.history_dir.glob("*.json")):
+            try:
+                with open(file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                record = PackageRecord(**data)
+                self.records.append(record)
+            except Exception:
+                pass
+        self.records.sort(key=lambda r: r.timestamp, reverse=True)

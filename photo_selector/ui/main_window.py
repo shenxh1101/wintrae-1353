@@ -1,11 +1,12 @@
 import sys
+from pathlib import Path
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QVBoxLayout, QWidget
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt
 
 from ..scanner import FileScanner
 from ..rules import RulesConfig
-from ..logger import Logger
+from ..logger import Logger, PackageHistory
 from ..packager import PackageGenerator
 from ..config import AppConfig
 
@@ -19,9 +20,18 @@ class MainWindow(QMainWindow):
         self.scanner = FileScanner()
         self.rules = RulesConfig()
         self.logger = Logger()
+        self.history = PackageHistory()
         self.packager = PackageGenerator(self.rules, self.logger)
 
         self._init_ui()
+        self._init_history()
+
+    def _init_history(self):
+        import tempfile
+        hist_dir = Path.home() / ".photo_selector" / "history"
+        hist_dir.mkdir(parents=True, exist_ok=True)
+        self.history.set_history_directory(str(hist_dir))
+        self.logger.set_log_directory(str(hist_dir.parent / "logs"))
 
     def _init_ui(self):
         central_widget = QWidget()
@@ -43,8 +53,8 @@ class MainWindow(QMainWindow):
         self.scan_page = ScanPage(self.scanner, self)
         self.rules_page = RulesPage(self.rules, self)
         self.preview_page = PreviewPage(self.scanner, self.rules, self)
-        self.output_page = OutputPage(self.scanner, self.rules, self.packager, self.logger, self)
-        self.log_page = LogPage(self.logger, self)
+        self.output_page = OutputPage(self.scanner, self.rules, self.packager, self.logger, self.history, self)
+        self.log_page = LogPage(self.logger, self.history, self)
 
         self.tabs.addTab(self.scan_page, "📁 文件扫描")
         self.tabs.addTab(self.rules_page, "⚙️ 规则设置")
@@ -54,7 +64,7 @@ class MainWindow(QMainWindow):
 
         self.scan_page.projects_updated.connect(self._on_projects_updated)
         self.rules_page.rules_changed.connect(self._on_rules_changed)
-        self.output_page.package_generated.connect(self._on_package_generated)
+        self.output_page.batch_finished.connect(self._on_batch_finished)
 
         self.statusBar().showMessage("就绪")
 
@@ -65,11 +75,12 @@ class MainWindow(QMainWindow):
 
     def _on_rules_changed(self):
         self.preview_page.refresh_preview()
+        self.output_page.refresh_delivery_check()
         self.statusBar().showMessage("规则已更新")
 
-    def _on_package_generated(self, package_path):
-        self.log_page.refresh_logs()
-        self.statusBar().showMessage(f"选片包已生成: {package_path}")
+    def _on_batch_finished(self):
+        self.log_page.refresh_history()
+        self.statusBar().showMessage("批量生成完成")
 
 
 def main():
