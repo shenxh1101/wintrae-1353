@@ -35,11 +35,20 @@ class BatchProjectResult:
     def get_summary(self) -> str:
         lines = []
         lines.append(f"项目: {self.project_name}")
-        lines.append(f"状态: {'成功' if self.status == 'success' else '失败'}")
+        if self.status == "success":
+            lines.append("状态: ✓ 成功")
+        elif self.status == "skipped":
+            lines.append("状态: ⏭️  已跳过")
+        else:
+            lines.append("状态: ✗ 失败")
         lines.append(f"照片: {self.total_photos} 张")
         lines.append(f"成功: {self.processed} 张")
         lines.append(f"跳过: {self.skipped} 张")
         lines.append(f"失败: {self.failed} 张")
+        if self.skip_reasons:
+            lines.append("跳过原因:")
+            for reason, count in self.skip_reasons.items():
+                lines.append(f"  • {reason}: {count} 个")
         if self.package_path:
             lines.append(f"输出: {self.package_path}")
         if self.error_message:
@@ -153,7 +162,13 @@ class BatchRecord:
 
         for i, pr in enumerate(self.project_results, 1):
             lines.append(f"[{i}] {pr.project_name}")
-            lines.append(f"    状态: {'✓ 成功' if pr.status == 'success' else '✗ 失败'}")
+            if pr.status == "success":
+                status_text = "✓ 成功"
+            elif pr.status == "skipped":
+                status_text = "⏭️  已跳过"
+            else:
+                status_text = "✗ 失败"
+            lines.append(f"    状态: {status_text}")
             lines.append(f"    统计: {pr.processed} 成功 / {pr.skipped} 跳过 / {pr.failed} 失败 / {pr.total_photos} 总计")
             if pr.package_path:
                 lines.append(f"    输出: {pr.package_path}")

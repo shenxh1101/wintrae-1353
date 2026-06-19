@@ -35,6 +35,7 @@ class BatchPackageThread(QThread):
         history: PackageHistory,
         batch_history: BatchHistory,
         task_queue: TaskQueue,
+        scanner: FileScanner,
         task_ids: list,
         output_dir: str,
         make_zip: bool,
@@ -45,6 +46,7 @@ class BatchPackageThread(QThread):
         self.history = history
         self.batch_history = batch_history
         self.task_queue = task_queue
+        self.scanner = scanner
         self.task_ids = task_ids
         self.output_dir = output_dir
         self.make_zip = make_zip
@@ -76,17 +78,20 @@ class BatchPackageThread(QThread):
                 overall_pct = int((idx / total) * 100)
                 self.progress.emit(overall_pct, f"[{idx+1}/{total}] 正在生成 {task.project_summary.project_name}...")
 
-                self.packager.logger.reset_stats()
-                self.packager.logger.stats.total_files = task.project_summary.photo_count
+                project = None
+                if self.scanner and self.scanner.projects:
+                    project = self.scanner.get_project_by_name(task.project_summary.project_name)
+                if not project and task.project_summary.source_dir:
+                    project = self.scanner.rescan_project(
+                        task.project_summary.source_dir,
+                        task.project_summary.project_name
+                    )
 
-                project = ProjectItem(
-                    name=task.project_summary.project_name,
-                    photos=[]
-                )
-                project.client_name = task.project_summary.client_name
-                project.shoot_date = task.project_summary.shoot_date
-                project.cover_path = Path(task.project_summary.cover_path) if task.project_summary.cover_path else None
-                project.total_size = int(task.project_summary.total_size_mb * 1024 * 1024)
+                if not project:
+                    raise RuntimeError(f"无法找到项目照片：{task.project_summary.project_name}，请确认源目录存在")
+
+                self.packager.logger.reset_stats()
+                self.packager.logger.stats.total_files = project.photo_count
 
                 package_path = self.packager.generate_package(project, task.output_dir or self.output_dir)
 
@@ -108,7 +113,7 @@ class BatchPackageThread(QThread):
                     client_name=task.project_summary.client_name,
                     shoot_date=task.project_summary.shoot_date,
                     status="success",
-                    total_photos=task.project_summary.photo_count,
+                    total_photos=project.photo_count,
                     processed=self.packager.logger.stats.processed_files,
                     skipped=self.packager.logger.stats.skipped_files,
                     failed=self.packager.logger.stats.failed_files,
@@ -122,7 +127,7 @@ class BatchPackageThread(QThread):
                     "task_id": task_id,
                     "project": task.project_summary.project_name,
                     "status": "success",
-                    "total": task.project_summary.photo_count,
+                    "total": project.photo_count,
                     "processed": self.packager.logger.stats.processed_files,
                     "skipped": self.packager.logger.stats.skipped_files,
                     "failed": self.packager.logger.stats.failed_files,
@@ -154,7 +159,7 @@ class BatchPackageThread(QThread):
                     total_photos=task.project_summary.photo_count,
                     processed=self.packager.logger.stats.processed_files,
                     skipped=self.packager.logger.stats.skipped_files,
-                    failed=task.project_summary.photo_count,
+                    failed=self.packager.logger.stats.failed_files or task.project_summary.photo_count,
                     skip_reasons=dict(self.packager.logger.stats.skip_reasons),
                     failed_files=list(self.packager.logger.stats.failed_files_list),
                     package_path="",
@@ -168,9 +173,9 @@ class BatchPackageThread(QThread):
                     "status": "error",
                     "error": error_msg,
                     "total": task.project_summary.photo_count,
-                    "processed": 0,
-                    "skipped": 0,
-                    "failed": task.project_summary.photo_count,
+                    "processed": self.packager.logger.stats.processed_files,
+                    "skipped": self.packager.logger.stats.skipped_files,
+                    "failed": self.packager.logger.stats.failed_files or task.project_summary.photo_count,
                     "path": ""
                 }
                 results.append(result)
@@ -776,6 +781,7 @@ class OutputPage(QWidget):
             self.history,
             self.batch_history,
             self.task_queue,
+            self.scanner,
             task_ids,
             output_dir,
             self.zip_checkbox.isChecked(),

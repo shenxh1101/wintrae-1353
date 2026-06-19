@@ -63,42 +63,68 @@ class PackageGenerator:
 
         for photo in photos_to_process:
             try:
+                ext = photo.path.suffix.lower()
+                is_raw = ext in AppConfig.SUPPORTED_RAW_EXTENSIONS
+
+                if is_raw and not self.rules.include_raw:
+                    self.logger.log_skip("RAW文件未启用包含，按规则跳过", photo.filename)
+                    continue
+
+                if not self.image_processor.is_valid_image(photo.path) and not is_raw:
+                    self.logger.log_failure(photo.filename, "文件损坏或格式不支持")
+                    continue
+
                 new_filename = self._generate_filename(project, photo, index)
 
                 thumb_filename = Path(new_filename).stem + ".jpg"
                 thumb_path = thumbs_dir / thumb_filename
 
-                watermark_text = self.rules.watermark_text if self.rules.watermark_enabled else ""
-                success = self.image_processor.generate_thumbnail(
-                    photo.path,
-                    thumb_path,
-                    self.rules.thumbnail_size,
-                    quality=self.rules.jpeg_quality,
-                    watermark_text=watermark_text,
-                    watermark_opacity=self.rules.watermark_opacity
-                )
-
-                if not success:
-                    self.logger.log_failure(photo.filename, "缩略图生成失败")
-                    continue
-
-                if self.rules.include_raw:
-                    ext = photo.path.suffix.lower()
-                    if ext in AppConfig.SUPPORTED_RAW_EXTENSIONS:
-                        orig_path = originals_dir / (Path(new_filename).stem + ext)
-                    else:
-                        orig_path = originals_dir / new_filename
-                    shutil.copy2(photo.path, orig_path)
+                if is_raw:
+                    thumb_ok = False
+                    try:
+                        watermark_text = self.rules.watermark_text if self.rules.watermark_enabled else ""
+                        thumb_ok = self.image_processor.generate_thumbnail(
+                            photo.path,
+                            thumb_path,
+                            self.rules.thumbnail_size,
+                            quality=self.rules.jpeg_quality,
+                            watermark_text=watermark_text,
+                            watermark_opacity=self.rules.watermark_opacity
+                        )
+                    except Exception:
+                        thumb_ok = False
+                    if not thumb_ok:
+                        self.logger.log_skip("RAW文件无法生成缩略图，已跳过", photo.filename)
+                        continue
                 else:
-                    orig_path = originals_dir / new_filename
-                    shutil.copy2(photo.path, orig_path)
+                    watermark_text = self.rules.watermark_text if self.rules.watermark_enabled else ""
+                    success = self.image_processor.generate_thumbnail(
+                        photo.path,
+                        thumb_path,
+                        self.rules.thumbnail_size,
+                        quality=self.rules.jpeg_quality,
+                        watermark_text=watermark_text,
+                        watermark_opacity=self.rules.watermark_opacity
+                    )
+
+                    if not success:
+                        self.logger.log_failure(photo.filename, "缩略图生成失败")
+                        continue
+
+                if self.rules.include_raw and is_raw:
+                    orig_path = originals_dir / (Path(new_filename).stem + ext)
+                else:
+                    orig_ext = self._resolve_extension(photo)
+                    orig_path = originals_dir / (Path(new_filename).stem + orig_ext)
+                shutil.copy2(photo.path, orig_path)
 
                 manifest["photos"].append({
                     "original_name": photo.filename,
                     "new_name": new_filename,
                     "thumbnail": f"thumbnails/{thumb_filename}",
                     "original": f"originals/{orig_path.name}",
-                    "size": photo.size
+                    "size": photo.size,
+                    "is_raw": is_raw
                 })
 
                 self.logger.increment_processed()

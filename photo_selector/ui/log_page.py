@@ -355,7 +355,8 @@ class LogPage(QWidget):
         for r in records:
             status_text = "✓ 完成" if r.status == "completed" else ("⏸️ 已停止" if r.status == "stopped" else "✗ 失败")
             status_color = "#4CAF50" if r.status == "completed" else "#FF9800" if r.status == "stopped" else "#F44336"
-            item_text = f"{r.timestamp[:16]} | {r.completed_projects}/{r.total_projects} 项目 | {status_text}"
+            skip_part = f" / 跳过 {r.skipped_projects}" if r.skipped_projects > 0 else ""
+            item_text = f"{r.timestamp[:16]} | 成功 {r.completed_projects} / 失败 {r.failed_projects}{skip_part} / 共 {r.total_projects} | {status_text}"
             item = QListWidgetItem(item_text)
             item.setData(Qt.UserRole, r.batch_id)
             item.setForeground(QColor(status_color))
@@ -380,9 +381,17 @@ class LogPage(QWidget):
         self.batch_projects_table.setRowCount(len(record.project_results))
         for row, pr in enumerate(record.project_results):
             self.batch_projects_table.setItem(row, 0, QTableWidgetItem(pr.project_name))
-            status_text = "成功" if pr.status == "success" else "失败"
+            if pr.status == "success":
+                status_text = "✓ 成功"
+                status_color = "#4CAF50"
+            elif pr.status == "skipped":
+                status_text = "⏭️  跳过"
+                status_color = "#FF9800"
+            else:
+                status_text = "✗ 失败"
+                status_color = "#F44336"
             status_item = QTableWidgetItem(status_text)
-            status_item.setForeground(QColor("#4CAF50" if pr.status == "success" else "#F44336"))
+            status_item.setForeground(QColor(status_color))
             self.batch_projects_table.setItem(row, 1, status_item)
             self.batch_projects_table.setItem(row, 2, QTableWidgetItem(str(pr.total_photos)))
             self.batch_projects_table.setItem(row, 3, QTableWidgetItem(str(pr.processed)))
@@ -419,7 +428,8 @@ class LogPage(QWidget):
         for r in filtered:
             status_text = "✓ 完成" if r.status == "completed" else ("⏸️ 已停止" if r.status == "stopped" else "✗ 失败")
             status_color = "#4CAF50" if r.status == "completed" else "#FF9800" if r.status == "stopped" else "#F44336"
-            item_text = f"{r.timestamp[:16]} | {r.completed_projects}/{r.total_projects} 项目 | {status_text}"
+            skip_part = f" / 跳过 {r.skipped_projects}" if r.skipped_projects > 0 else ""
+            item_text = f"{r.timestamp[:16]} | 成功 {r.completed_projects} / 失败 {r.failed_projects}{skip_part} / 共 {r.total_projects} | {status_text}"
             item = QListWidgetItem(item_text)
             item.setData(Qt.UserRole, r.batch_id)
             item.setForeground(QColor(status_color))
