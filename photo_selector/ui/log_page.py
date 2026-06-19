@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QSplitter, QAbstractItemView, QMessageBox
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 
 from ..logger import Logger, LogLevel, LogType
 
@@ -12,6 +13,7 @@ class LogPage(QWidget):
     def __init__(self, logger: Logger, parent=None):
         super().__init__(parent)
         self.logger = logger
+        self._current_entries = []
         self._init_ui()
 
     def _init_ui(self):
@@ -185,7 +187,8 @@ class LogPage(QWidget):
         self._populate_table(filtered)
 
     def _populate_table(self, entries):
-        self.log_table.setRowCount(len(entries))
+        self._current_entries = list(entries)
+        self.log_table.setRowCount(len(self._current_entries))
 
         level_colors = {
             "info": "#2196F3",
@@ -209,32 +212,48 @@ class LogPage(QWidget):
             "success": "成功"
         }
 
-        for row, entry in enumerate(entries):
+        for row, entry in enumerate(self._current_entries):
             time_item = QTableWidgetItem(entry.timestamp)
             level_item = QTableWidgetItem(level_names.get(entry.level, entry.level))
             type_item = QTableWidgetItem(type_names.get(entry.type, entry.type))
             msg_item = QTableWidgetItem(entry.message)
 
-            color = level_colors.get(entry.level, "#333")
-            level_item.setForeground(Qt.GlobalColor(color) if isinstance(color, str) else color)
+            color_hex = level_colors.get(entry.level, "#333333")
+            level_item.setForeground(QColor(color_hex))
 
             self.log_table.setItem(row, 0, time_item)
             self.log_table.setItem(row, 1, level_item)
             self.log_table.setItem(row, 2, type_item)
             self.log_table.setItem(row, 3, msg_item)
 
+        self.detail_text.clear()
+
     def _on_log_clicked(self, item):
         row = item.row()
-        if row >= len(self.logger.entries):
+        if row < 0 or row >= len(self._current_entries):
             return
 
-        entry = self.logger.entries[-(row + 1)] if row < len(self.logger.entries) else None
+        entry = self._current_entries[row]
         if not entry:
             return
 
+        level_names = {
+            "info": "信息",
+            "warning": "警告",
+            "error": "错误",
+            "success": "成功"
+        }
+        type_names = {
+            "scan": "扫描",
+            "process": "处理",
+            "skip": "跳过",
+            "package": "打包",
+            "system": "系统"
+        }
+
         details_text = f"时间: {entry.timestamp}\n"
-        details_text += f"级别: {entry.level}\n"
-        details_text += f"类型: {entry.type}\n"
+        details_text += f"级别: {level_names.get(entry.level, entry.level)}\n"
+        details_text += f"类型: {type_names.get(entry.type, entry.type)}\n"
         details_text += f"消息: {entry.message}\n"
 
         if entry.details:

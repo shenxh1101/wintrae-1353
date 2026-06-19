@@ -208,10 +208,13 @@ class RulesPage(QWidget):
             self, "加载配置", "", "JSON文件 (*.json)"
         )
         if file_path:
-            self.rules = RulesConfig.load_from_file(file_path)
+            loaded = RulesConfig.load_from_file(file_path)
+            for attr in loaded.to_dict():
+                if hasattr(self.rules, attr):
+                    setattr(self.rules, attr, getattr(loaded, attr))
             self._load_rules()
             self.rules_changed.emit()
-            QMessageBox.information(self, "提示", "配置已加载")
+            QMessageBox.information(self, "提示", "配置已加载并应用")
 
     def _reset_defaults(self):
         reply = QMessageBox.question(

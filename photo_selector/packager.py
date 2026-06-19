@@ -86,18 +86,11 @@ class PackageGenerator:
                     ext = photo.path.suffix.lower()
                     if ext in AppConfig.SUPPORTED_RAW_EXTENSIONS:
                         orig_path = originals_dir / (Path(new_filename).stem + ext)
-                        shutil.copy2(photo.path, orig_path)
-                    elif self.rules.output_format == "jpg":
-                        orig_path = originals_dir / (Path(new_filename).stem + ".jpg")
-                        shutil.copy2(photo.path, orig_path)
                     else:
                         orig_path = originals_dir / new_filename
-                        shutil.copy2(photo.path, orig_path)
+                    shutil.copy2(photo.path, orig_path)
                 else:
-                    if self.rules.output_format == "jpg":
-                        orig_path = originals_dir / (Path(new_filename).stem + ".jpg")
-                    else:
-                        orig_path = originals_dir / new_filename
+                    orig_path = originals_dir / new_filename
                     shutil.copy2(photo.path, orig_path)
 
                 manifest["photos"].append({
@@ -145,6 +138,13 @@ class PackageGenerator:
         name = project.client_name or project.name
         return f"{date_str}_{name}_选片包"
 
+    def _resolve_extension(self, photo: PhotoItem) -> str:
+        fmt = self.rules.output_format
+        if fmt == "original" or not fmt:
+            return photo.path.suffix.lower()
+        else:
+            return f".{fmt}"
+
     def _generate_filename(self, project: ProjectItem, photo: PhotoItem, index: int) -> str:
         try:
             name = self.rules.naming_pattern.format(
@@ -156,7 +156,7 @@ class PackageGenerator:
         except Exception:
             name = f"{project.client_name or 'photo'}_{index:04d}"
 
-        ext = f".{self.rules.output_format}" if self.rules.output_format else photo.path.suffix
+        ext = self._resolve_extension(photo)
         return name + ext
 
     def _generate_manifest(self, package_dir: Path, manifest: dict):
